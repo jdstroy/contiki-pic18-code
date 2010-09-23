@@ -1,0 +1,90 @@
+### Compiler definitions
+CC       = sdcc
+AS       = gpasm
+LD       = gplink
+AR       = gplib
+OBJCOPY  = objcopy
+STRIP    = strip
+
+### Define the CPU directory
+CONTIKI_CPU=$(CONTIKI)/cpu/pic18f
+
+CFLAGS  += --std-c99 -mpic16 -p$(MCU) --stack-auto  --calltree --optimize-df \
+	--obanksel=2 --debug
+LDFLAGS += -c -r -m  -l $(MCU).lkr
+AROPTS   = -c
+
+### CPU-dependent cleanup files
+CLEAN += *.lnk *.sym *.lib *.ihx *.rel *.mem *.rst *.asm *.cof *.cod *.calltree
+
+ifeq ($(shell uname -s), Linux)
+SDCC_DIR = /usr/share/sdcc/lib/pic16
+else
+# expect cygwin
+SDCC_DIR = "$(shell cygpath -w "$(subst bin/sdcc,lib/pic16,$(shell which sdcc))")"
+endif
+### CPU-dependent directories
+CONTIKI_CPU_DIRS = . dev
+
+### CPU-dependent source files
+CONTIKI_SOURCEFILES += $(CONTIKI_TARGET_SOURCEFILES) \
+  pic18f-uart1.c clock.c rtimer-arch.c watchdog.c pic18f.c leds.c ## button.c 
+CONTIKI_ASMFILES +=
+
+
+CONTIKI_PLATFORM_DIRS = $(PLATFORM_APPDIRS) \
+  ${addprefix $(CONTIKI)/platform/$(TARGET)/, $(CONTIKI_TARGET_DIRS)}
+
+CONTIKI_CPU_DIRS_LIST = ${addprefix $(CONTIKI_CPU)/, \
+  $(CONTIKI_CPU_DIRS)}
+
+### FIXME: override SYSTEM and LIBS for now since timetable.c and ifft.c won't compile
+SYSTEM := process.c procinit.c autostart.c elfloader.c profile.c \
+  timetable-aggregate.c compower.c serial-line.c 
+LIBS := memb.c mmem.c timer.c list.c etimer.c energest.c rtimer.c crc16.c stimer.c \
+  print-stats.c crc16.c random.c checkpoint.c ringbuf.c
+
+### Compilation rules
+
+.SUFFIXES:
+
+CUSTOM_RULE_C_TO_OBJECTDIR_O = 1
+## CUSTOM_RULE_C_TO_CO = 1
+CUSTOM_RULE_ALLOBJS_TO_TARGETLIB = 1
+CUSTOM_RULE_LINK = 1
+
+ifdef CUSTOM_RULE_C_TO_OBJECTDIR_O
+$(OBJECTDIR)/%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -MM -c $< > $(@:.o=.d)
+	@$(FINALIZE_DEPENDENCY)
+endif
+
+ifdef CUSTOM_RULE_C_TO_CO
+%.co: %.c
+	$(CC) $(CFLAGS) -DAUTOSTART_ENABLE -c $< -o $(@:.co=.asm)
+	$(AS) -p p$(MCU) -c $(@:.co=.asm)
+	@mv $(@:.co=.o) $@
+endif
+
+## CUSTOM_RULE_ALLOBJS_TO_TARGETLIB
+contiki-$(TARGET).lib: $(CONTIKI_OBJECTFILES) 
+	rm -f $@
+	$(AR) $(AROPTS) $@ $^
+	@rm -f *.adb
+
+%.$(TARGET): %.hex
+
+# .hex is the gplink output file
+.PRECIOUS: %.hex
+
+## .hex is the gplink output file
+%.hex: %.co $(PROJECT_OBJECTFILES) $(PROJECT_LIBRARIES) contiki-$(TARGET).lib
+	$(LD) $(LDFLAGS) -o $@ -I . -I $(SDCC_DIR) $*.co crt0iz.o \
+	libsdcc.lib libdev$(MCU).lib libio$(MCU).lib libm18f.lib \
+	libc18f.lib libdebug.lib contiki-$(TARGET).lib 
+
+# Force the compilation of %.$(TARGET) to compile the %.hex file.
+%.$(TARGET): %.hex
+	@
+
